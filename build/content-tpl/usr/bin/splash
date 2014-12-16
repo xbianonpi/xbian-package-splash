@@ -1,0 +1,66 @@
+#!/bin/sh +e
+
+LOCKDIR=/run/splash/splash.lock
+
+cleanup_lock() 
+{
+    rmdir $LOCKDIR
+}
+
+trap '' 2 20
+trap "cleanup_lock || :" EXIT TERM
+
+d=''
+
+[ "$(id -u)" -eq 0 ] || sdc=sudo
+
+$sdc mkdir -p -m 777 /run/splash
+while ! mkdir $LOCKDIR 2> /dev/null ; do sleep 0.3; done
+
+[ "$1" = "--exit" -o "$1" = '-e' ] && { $sdc pkill splash-daemon; con=$(fgconsole); setterm -cursor on >/dev/tty$con; $sdc rm -fr /run/splash/splash.pid; exit 0; }
+[ -e /run/nosplash -a "$1" != '--force' ] && exit 0
+
+$sdc /bin/fuser -s 9999/tcp || { d=$(pwd); cd /etc/default; $sdc /usr/local/sbin/splash-daemon;  }
+
+while test $# -gt 0; do
+    shi=2
+    if echo "$1" | grep -q '\='; then
+        c=$(echo "$1" | awk -F'=' '{print $1}')
+        p=$(echo "$1" | awk -F'=' '{print $2}')
+        shi=1
+    else
+        c="$1"; p="$2"
+        [ -z "$p" ] && shi=1
+    fi
+
+    case $c in
+        '--msgtxt'|'-m')
+            cmdline="$cmdline -m $(echo $p | sed 's/ /\\ /g')"
+            shift $shi
+            ;;
+        '--infinitebar'|'-i')
+            cmdline="$cmdline -i"
+            shift
+            ;;
+        '--percentage'|'-p')
+            [ -z "$p" ] && p=100
+            cmdline="$cmdline -p $p"
+            shift $shi
+            ;;
+        '--black'|'-b'|'--blank') 
+            cmdline="$cmdline -b"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+
+done
+
+eval /usr/local/bin/splash-send $cmdline
+setterm -cursor off >/dev/tty$(fgconsole)
+[ -n "$d" ] && cd "$d"
+
+exit 0
+

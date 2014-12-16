@@ -1,0 +1,11 @@
+Origin: XBian
+Package: __PKGNAME__
+Version: 2.0.4-6
+Essential: Yes
+Priority: standard
+Architecture: armhf
+__PKGDEPS__
+Replaces: xbian-update, xbian-package-initramfs-tools (<<1.0-1)
+Maintainer: mk01 <development@xbian.org>
+Description: Splash screen (__ARCHBRANCH__)
+Section: video

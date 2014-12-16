@@ -1,0 +1,59 @@
+[{
+	"name": "progress",
+	"type" : "shape",
+	"shape": "rectangle",
+	"width": 272,
+	"height": 149,
+	"y": -50,
+	"filled": 1,
+	"z-index": 1,
+	"color": [ 21, 49, 60 ]
+}, {
+	"name": "progress",
+	"type" : "shape",
+	"shape": "rectangle",
+	"y": -50,
+	"width": 330,
+	"height": 207,
+	"border": 26,
+	"z-index": 1,
+	"color": [ 249, 149, 29 ]
+}, {
+	"name": "logo",
+	"type": "image",
+	"y": -50,
+	"z-index": 2,
+	"image": "/usr/local/lib/splash/logo.png"
+}, {
+	"name": "text",
+	"type": "text",
+	"size": 28,
+	"x": 236,
+	"y": 160,
+	"align": "right",
+	"decoration": "none",
+	"spacing": 2,
+	"font": "/usr/local/lib/splash/Comfortaa-Light.ttf",
+	"text": "loading...",
+	"z-index": 2,
+	"color": [ 150, 150, 155 ]
+}, {
+	"name": "progress",
+	"type": "progress",
+	"y": 116,
+	"percentage": 0,
+	"z-index": 2,
+	"image": "/usr/local/lib/splash/progressbar.png",
+	"inactive": [ "/usr/local/lib/splash/empty.png", "/usr/local/lib/splash/empty.png", "/usr/local/lib/splash/empty.png" ],
+	"active": [ "/usr/local/lib/splash/full.png", "/usr/local/lib/splash/full.png", "/usr/local/lib/splash/full.png" ]
+}, {
+	"name": "progress",
+	"type" : "shape",
+	"shape": "rectangle",
+	"y": 115,
+	"width": 415,
+	"height": 33,
+	"border": 3,
+	"z-index": 2,
+	"color": [ 150, 150, 155 ]
+}]

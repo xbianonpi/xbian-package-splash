@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ $1 == "configure" ]; then
+
+	grep ^tty /etc/group | grep -qw xbian || usermod -G tty -a xbian
+	dpkg-trigger --no-await trigger-xbian-update-initramfs
+
+fi
