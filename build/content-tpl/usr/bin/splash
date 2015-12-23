@@ -17,11 +17,21 @@ d=''
 $sdc mkdir -p -m 777 /run/splash
 while ! mkdir $LOCKDIR 2> /dev/null ; do sleep 0.3; done
 
-[ "$1" = "--exit" -o "$1" = '-e' ] && { /usr/local/bin/splash-send -e; while pgrep splash-daemon >/dev/null; do sleep 0.3; done; con=$(fgconsole); setterm -cursor on >/dev/tty$con; $sdc rm -fr /run/splash/splash.pid; exit 0; }
+if [ "$1" = "--exit" -o "$1" = '-e' ]; then
+    /usr/local/bin/splash-send -e
+    while pgrep splash-daemon >/dev/null; do sleep 0.3; done
+    $sdc rm -fr /run/splash/splash.pid
+    initctl emit -n splash ACTION=stop
+    exit 0
+fi
 [ -e /run/nosplash -a "$1" != '--force' ] && exit 0
 
-$sdc /bin/fuser -s 9999/tcp || { d=$(pwd); cd /etc/default; $sdc /usr/local/sbin/splash-daemon;  }
-$sdc setterm -cursor off >/dev/tty$(fgconsole)
+if ! $sdc /bin/fuser -s 9999/tcp; then
+    d=$(pwd)
+    cd /etc/default
+    initctl emit -n splash ACTION=start
+    $sdc /usr/local/sbin/splash-daemon
+fi
 
 while test $# -gt 0; do
     shi=2
