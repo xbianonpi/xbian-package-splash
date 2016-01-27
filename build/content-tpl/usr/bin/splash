@@ -21,7 +21,7 @@ if [ "$1" = "--exit" -o "$1" = '-e' ]; then
     /usr/local/bin/splash-send -e
     while pgrep splash-daemon >/dev/null; do sleep 0.3; done
     $sdc rm -fr /run/splash/splash.pid
-    initctl emit -n splash ACTION=stop
+    /sbin/initctl emit -n splash ACTION=stop
     exit 0
 fi
 [ -e /run/nosplash -a "$1" != '--force' ] && exit 0
@@ -29,7 +29,7 @@ fi
 if ! $sdc /bin/fuser -s 9999/tcp; then
     d=$(pwd)
     cd /etc/default
-    initctl emit -n splash ACTION=start
+    /sbin/initctl emit -n splash ACTION=start
     $sdc /usr/local/sbin/splash-daemon
 fi
 
