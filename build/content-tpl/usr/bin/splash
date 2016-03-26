@@ -7,7 +7,7 @@ cleanup_lock()
     rmdir $LOCKDIR
 }
 
-trap '' 2 20
+#trap '' 2 20
 trap "cleanup_lock || :" EXIT TERM
 
 [ "$(id -u)" -eq 0 ] || sdc=sudo
@@ -15,13 +15,13 @@ trap "cleanup_lock || :" EXIT TERM
 d=''
 
 $sdc mkdir -p -m 777 /run/splash
-while ! mkdir $LOCKDIR 2> /dev/null ; do sleep 0.3; done
+while ! mkdir $LOCKDIR 2> /dev/null ; do sleep 0.5; done
 
 if [ "$1" = "--exit" -o "$1" = '-e' ]; then
     /usr/local/bin/splash-send -e
-    while pgrep splash-daemon >/dev/null; do sleep 0.3; done
+    while pgrep splash-daemon >/dev/null; do sleep 0.4; done
     $sdc rm -fr /run/splash/splash.pid
-    /sbin/initctl emit -n splash ACTION=stop
+    $sdc /sbin/initctl emit splash ACTION=stop
     exit 0
 fi
 [ -e /run/nosplash -a "$1" != '--force' ] && exit 0
@@ -29,8 +29,9 @@ fi
 if ! $sdc /bin/fuser -s 9999/tcp; then
     d=$(pwd)
     cd /etc/default
-    /sbin/initctl emit -n splash ACTION=start
     $sdc /usr/local/sbin/splash-daemon
+    $sdc /sbin/initctl emit splash ACTION=start
+    cd /
 fi
 
 while test $# -gt 0; do
