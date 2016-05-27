@@ -86,7 +86,7 @@ index 53715be..4ca6d08 100644
 +	cp splash-daemon splash-daemon-static -t $(DESTDIR)/$(PREFIX)/sbin
 +	cp splash-send -t $(DESTDIR)/$(PREFIX)/bin
 diff --git a/daemon.c b/daemon.c
-index 8adc6f2..6603a1b 100644
+index 8adc6f2..acc8c0e 100644
 --- a/daemon.c
 +++ b/daemon.c
 @@ -60,7 +60,7 @@ int black = 0;
@@ -98,7 +98,54 @@ index 8adc6f2..6603a1b 100644
  int infinite = 0;
  
  typedef struct progress_t {
-@@ -393,6 +393,16 @@ void *update_progress(void *param) {
+@@ -260,15 +260,15 @@ void *update_progress(void *param) {
+ 		int target_width = 0;
+ 		int x = 0, y = 0;
+ 
+-		if(percentage == 100 || percentage == -1 || percentage == 0) {
++		if(percentage == 100 || percentage == -1 || percentage == 0 || percentage == 101) {
+ 			target_width = (int)progress.background_w;
+ 		} else {
+ 			target_width = (int)(progress.background_w * (((double)percentage/100)));
+ 		}
+ 
+ 		if(draw_loop) {
++			pthread_mutex_lock(&progress_lock);
+ 			while(draw_loop) {
+-				pthread_mutex_lock(&progress_lock);
+ 				if(target_width > 0 && nodaemon == 0 && black == 0) {
+ 					if(progress_active == 0) {
+ 						if(strcmp(progress.active_start_e, "jpg") == 0) {
+@@ -363,13 +363,12 @@ void *update_progress(void *param) {
+ 						new_percentage = percentage;
+ 						target_width = (int)progress.background_w;
+ 						x = 0;
+-					} else {
++					} else
+ 						draw_loop = 0;
+-					}
+ 					last_percentage = percentage;
+ 				}
+-				pthread_mutex_unlock(&progress_lock);
+ 			}
++			pthread_mutex_unlock(&progress_lock);
+ 		} else {
+ 			if(percentage > 0 && percentage < 100) {
+ 				struct timeval tp;
+@@ -381,10 +380,10 @@ void *update_progress(void *param) {
+ 				ts.tv_sec += 1;
+ 
+ 				n = pthread_cond_timedwait(&progress_signal, &progress_lock, &ts);
+-				if(n == ETIMEDOUT) {
++				if(n == ETIMEDOUT)
+ 					percentage++;
++				if(n == ETIMEDOUT || n == 0)
+ 					draw_loop = 1;
+-				}
+ 			} else {
+ 				n = pthread_cond_wait(&progress_signal, &progress_lock);
+ 			}
+@@ -393,6 +392,16 @@ void *update_progress(void *param) {
  	return (void *)NULL;
  }
  
@@ -115,7 +162,7 @@ index 8adc6f2..6603a1b 100644
  void main_draw(void) {
  	struct template_t *tmp_tpl = template;
  	char *image = NULL, *ext = NULL;
-@@ -529,13 +539,25 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+@@ -529,13 +538,25 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
  
  	getpeername(sd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
  
@@ -145,7 +192,7 @@ index 8adc6f2..6603a1b 100644
  			main_draw();
  			black = 0;
  		}
-@@ -543,6 +565,8 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+@@ -543,28 +564,28 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
  		if(json_find_string(json, "percentage", &message) == 0) {
  			if(black == 1) {
  				progress_active = 0;
@@ -154,7 +201,16 @@ index 8adc6f2..6603a1b 100644
  				main_draw();
  				black = 0;
  			}
-@@ -556,6 +580,8 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+-			draw_loop = 0;
+ 			infinite = 0;
+-			pthread_mutex_lock(&progress_lock);
+-			percentage = atoi(message);
+ 			draw_loop = 1;
+-			pthread_mutex_unlock(&progress_lock);
++			pthread_cond_signal(&progress_signal);
++			percentage = atoi(message);
++			draw_loop = 0;
+ 			pthread_cond_signal(&progress_signal);
  		} else if(json_find_string(json, "infinite", &message) == 0) {
  			if(black == 1) {
  				progress_active = 0;
@@ -163,7 +219,16 @@ index 8adc6f2..6603a1b 100644
  				main_draw();
  				black = 0;
  			}
-@@ -576,6 +602,8 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+-			draw_loop = 0;
+ 			infinite = 1;
+-			pthread_mutex_lock(&progress_lock);
+ 			draw_loop = 1;
+ 			percentage = -1;
+-			pthread_mutex_unlock(&progress_lock);
+ 			pthread_cond_signal(&progress_signal);
+ 		}
+ 		if(json_find_string(json, "message", &message) == 0) {
+@@ -576,12 +597,15 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
  				tmp_tpl = tmp_tpl->next;
  			}
  			if(black == 1) {
@@ -172,7 +237,14 @@ index 8adc6f2..6603a1b 100644
  				main_draw();
  				black = 0;
  			}
-@@ -617,7 +645,7 @@ void deamonize(void) {
+ 			if(strlen(prevMessage) > 0) {
+ 				main_clear_text(tmp_tpl);
+ 			}
++			pthread_cond_signal(&progress_signal);
+ 			main_draw_text(tmp_tpl, message);
+ 		}
+ 	}
+@@ -617,7 +641,7 @@ void deamonize(void) {
  		default:
  			save_pid(npid);
  			logprintf(LOG_INFO, "daemon started with pid: %d", npid);
@@ -181,7 +253,7 @@ index 8adc6f2..6603a1b 100644
  		break;
  	}
  }
-@@ -662,6 +690,7 @@ int main_gc(void) {
+@@ -662,6 +686,7 @@ int main_gc(void) {
  }
  
  int main(int argc, char **argv) {
@@ -189,7 +261,7 @@ index 8adc6f2..6603a1b 100644
  	/* Run main garbage collector when quiting the daemon */
  	gc_attach(main_gc);
  
-@@ -730,7 +759,7 @@ int main(int argc, char **argv) {
+@@ -730,7 +755,7 @@ int main(int argc, char **argv) {
  	template_file = malloc(14);
  	strcpy(template_file, "template.json");
  
@@ -198,7 +270,7 @@ index 8adc6f2..6603a1b 100644
  		if(read(f, buffer, BUFFER_SIZE) != -1) {
  			//If the file is empty, create a new process
  			if(!atoi(buffer)) {
-@@ -762,18 +791,12 @@ int main(int argc, char **argv) {
+@@ -762,18 +787,12 @@ int main(int argc, char **argv) {
  
  	if(nodaemon == 0) {
  		deamonize();
@@ -218,7 +290,7 @@ index 8adc6f2..6603a1b 100644
  	if(nodaemon == 1) {
  		//template_print();
  	}
-@@ -785,6 +808,7 @@ int main(int argc, char **argv) {
+@@ -785,6 +804,7 @@ int main(int argc, char **argv) {
      socket_callback.client_connected_callback = NULL;
      socket_callback.client_data_callback = &socket_parse_data;
  
@@ -316,7 +388,7 @@ index b106c19..aee536b 100644
  char *progname;
  
 diff --git a/libs/fb.c b/libs/fb.c
-index 84d1628..4ecfc76 100644
+index 84d1628..08854d7 100644
 --- a/libs/fb.c
 +++ b/libs/fb.c
 @@ -51,16 +51,21 @@ static struct fb_cmap ocmap = {0, 256, ored, ogreen, oblue};
@@ -576,21 +648,15 @@ index 84d1628..4ecfc76 100644
      }
 - 
 -	if(ioctl(tty, KDSETMODE, KD_GRAPHICS) == -1) {
--		logprintf(LOG_ERR, "ioctl KDSETMODE");
--		fb_cleanup();
--		exit(EXIT_FAILURE);
 +
 +// don't lock console
 +
-+    if(ioctl(tty, KDSETMODE, VT_AUTO/*KD_GRAPHICS | VT_AUTO*/) == -1) { //VT_PROCESS
++    if(ioctl(tty, KDSETMODE, /*KD_GRAPHICS | */VT_AUTO) == -1) { //VT_PROCESS
 +	logprintf(LOG_ERR, "ioctl KDSETMODE");
 +	fb_cleanup();
 +	exit(EXIT_FAILURE);
-     }
- 
--	fb_memset(fbp+fb_mem_offset, 0, finfo.line_length * vinfo.yres);
--	
--	fb_init_zmap();
++    }
++
 +    fb_memset(fbp+fb_mem_offset, 0, finfo.line_length * vinfo.yres);
 +
 +    fb_init_zmap();
@@ -599,18 +665,23 @@ index 84d1628..4ecfc76 100644
 +}
 +
 +void fb_unlock() {
-+	return;
 +
++    reopen_tty();
 +    if(ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo) == -1) {
 +		logprintf(LOG_ERR,"ioctl FBIOGET_VSCREENINFO");
 +		exit(EXIT_FAILURE);
 +    }
 +
-+/*	if(ioctl(tty, KDSETMODE, VT_AUTO) == -1) {
-+		logprintf(LOG_ERR, "ioctl KDSETMODE -------");
-+		fb_cleanup();
-+		exit(EXIT_FAILURE);
-+	}*/
++	if(ioctl(tty, KDSETMODE, VT_AUTO) == -1) {
+ 		logprintf(LOG_ERR, "ioctl KDSETMODE");
+ 		fb_cleanup();
+ 		exit(EXIT_FAILURE);
+-    }
+-
+-	fb_memset(fbp+fb_mem_offset, 0, finfo.line_length * vinfo.yres);
+-	
+-	fb_init_zmap();
++	}
  }
  
  unsigned long fb_get_location(int x, int y) {

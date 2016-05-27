@@ -1,6 +1,6 @@
 #!/bin/sh +e
 
-LOCKDIR=/run/splash/splash.lock
+LOCKDIR=$(mountpoint -q /run && echo /run/splash/splash.lock || echo /var/run/splash/splash.lock)
 
 cleanup_lock()
 {
@@ -19,18 +19,18 @@ while ! mkdir $LOCKDIR 2> /dev/null ; do sleep 0.5; done
 
 if [ "$1" = "--exit" -o "$1" = '-e' ]; then
     /usr/local/bin/splash-send -e
-    while pgrep splash-daemon >/dev/null; do sleep 0.4; done
+    while pgrep splash-daemon >/dev/null; do sleep 0.2; done
     $sdc rm -fr /run/splash/splash.pid
-    $sdc /sbin/initctl emit splash ACTION=stop
+    $sdc /sbin/initctl emit -n splash ACTION=stop
     exit 0
 fi
 [ -e /run/nosplash -a "$1" != '--force' ] && exit 0
 
+renice -n +3 -p $$ 
 if ! $sdc /bin/fuser -s 9999/tcp; then
     d=$(pwd)
     cd /etc/default
     $sdc /usr/local/sbin/splash-daemon
-    $sdc /sbin/initctl emit splash ACTION=start
     cd /
 fi
 
@@ -70,6 +70,7 @@ while test $# -gt 0; do
 
 done
 
+$sdc /sbin/initctl emit splash ACTION=start
 eval /usr/local/bin/splash-send $cmdline
 [ -n "$d" ] && cd "$d"
 
