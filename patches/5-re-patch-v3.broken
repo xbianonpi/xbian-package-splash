@@ -1,0 +1,976 @@
+diff --git a/Makefile b/Makefile
+index 53715be..4ca6d08 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,28 +1,31 @@
+ GCC = $(CROSS_COMPILE)gcc
+ SYS := $(shell $(GCC) -dumpmachine)
+ ifneq (, $(findstring x86_64, $(SYS)))
+-	OSFLAGS = -Ofast -fPIC -march=native -mtune=native -mfpmath=sse -Wconversion -Wunreachable-code -Wstrict-prototypes 
++	OSFLAGS = -Ofast -march=native -mtune=native -mfpmath=sse -Wconversion -Wunreachable-code -Wstrict-prototypes 
+ endif
+ ifneq (, $(findstring arm, $(SYS)))
+ 	ifneq (, $(findstring gnueabihf, $(SYS)))
+-		OSFLAGS = -Ofast -mfloat-abi=hard -mfpu=vfp -march=armv6 -Wconversion -Wunreachable-code -Wstrict-prototypes 
++		OSFLAGS = -O3 -mfloat-abi=hard -mfpu=vfp -march=armv6
+ 	endif
+ 	ifneq (, $(findstring gnueabi, $(SYS)))
+-		OSFLAGS = -Ofast -mfloat-abi=hard -mfpu=vfp -march=armv6 -Wconversion -Wunreachable-code -Wstrict-prototypes 
++		OSFLAGS = -O3 -mfloat-abi=hard
+ 	endif	
+ 	ifneq (, $(findstring gnueabisf, $(SYS)))
+ 		OSFLAGS = -Ofast -mfloat-abi=soft -mfpu=vfp -march=armv6 -Wconversion -Wunreachable-code -Wstrict-prototypes 
+ 	endif
+ endif
+ ifneq (, $(findstring amd64, $(SYS)))
+-	OSFLAGS = -O3 -fPIC -march=native -mtune=native -mfpmath=sse -Wno-conversion
++	OSFLAGS = -O3 -march=native -mtune=native -mfpmath=sse -Wno-conversion
+ endif
+-CFLAGS = -ffast-math $(OSFLAGS) -Wfloat-equal -Wshadow -Wpointer-arith -Wcast-align -Wstrict-overflow=5 -Wwrite-strings -Waggregate-return -Wcast-qual -Wswitch-default -Wswitch-enum -Wformat=2 -g -Wall -isystem. -isystem.. -Ilibs/ -isystem/usr/include/ -isystem/usr/include/freetype2/
+-SUBDIRS = libs
++CFLAGS = -ffast-math -fPIC -pthread $(OSFLAGS) -isystem. -isystem.. -Ilibs/ -isystem/usr/include/ -isystem/usr/include/freetype2/
++SUBDIRS = 
++#libs
+ SRC = $(wildcard *.c)
+ INCLUDES = $(wildcard libs/*.h) $(wildcard libs/*.o)
++INCLUDE = -I./ -I./libs -I/usr/include/freetype2
+ PROGAMS = $(patsubst %.c,splash-%,$(SRC))
+-LIBS = libs/libs.o /usr/lib/arm-linux-gnueabihf/libjpeg.a /usr/lib/arm-linux-gnueabihf/libfreetype.a /usr/lib/arm-linux-gnueabihf/libz.a -lpthread
++LIBS = -lpng -lfreetype -ljpeg -lpthread -lm -lz 
++PREFIX = /usr/local
+ 
+ .PHONY: subdirs $(SUBDIRS)
+ 
+@@ -31,18 +34,34 @@ subdirs: $(SUBDIRS) all
+ $(SUBDIRS):
+ 	$(MAKE) -C $@
+ 
+-all: $(LIBS) $(PROGAMS) 
++all: shlib $(PROGAMS)  .
+ 
+-splash-daemon: daemon.c $(INCLUDES) $(LIBS)
+-	$(GCC) $(CFLAGS) -lm -o $@ $(patsubst splash-%,%.c,$@) $(LIBS)
++shlib: $(wildcard libs/*.c) splash-daemon-static
++	mkdir -p .libs
++	$(GCC) -c $(CFLAGS) $(INCLUDE) $(LIBS) -o .libs/
++
++splash-daemon-static: daemon.c $(INCLUDES)
++	$(GCC) $(CFLAGS)  $(wildcard libs/*.c) $(LIBS) -lpng -lm -static -o $@ daemon.c
++	strip splash-daemon-static
++	
++splash-daemon: daemon.c $(INCLUDES)
++	$(GCC) $(CFLAGS) -lpthread  $(wildcard libs/*.c) $(LIBS) -lpng -lm -lfreetype -o $@ $(patsubst splash-%,%.c,$@)
++	strip splash-daemon
+ 	
+-splash-send: send.c $(INCLUDES) $(LIBS)
+-	$(GCC) $(CFLAGS) -lm -o $@ $(patsubst splash-%,%.c,$@) $(LIBS)
++splash-send: send.c $(INCLUDES)
++	$(GCC) $(CFLAGS)  $(wildcard libs/*.c)  $(LIBS) -lm -o $@ $(patsubst splash-%,%.c,$@)
++	strip splash-send
+ 
+ clean:
+ 	rm splash-* >/dev/null 2>&1 || true
+ 	rm *.so* || true
+ 	rm *.a* || true
+-	for dir in $(SUBDIRS); do \
+-		$(MAKE) -C $$dir $@; \
+-	done
+\ No newline at end of file
++	for dir in $(SUBDIRS) libs; do \
++		rm $$dir/*.o; \
++	done
++
++install: splash-daemon splash-daemon-static splash-send
++	mkdir -p $(DESTDIR)/$(PREFIX)/sbin
++	mkdir -p $(DESTDIR)/$(PREFIX)/bin
++	cp splash-daemon splash-daemon-static -t $(DESTDIR)/$(PREFIX)/sbin
++	cp splash-send -t $(DESTDIR)/$(PREFIX)/bin
+diff --git a/daemon.c b/daemon.c
+index 8adc6f2..6603a1b 100644
+--- a/daemon.c
++++ b/daemon.c
+@@ -60,7 +60,7 @@ int black = 0;
+ unsigned short draw_loop = 0;
+ unsigned short main_loop = 1;
+ int speed = 5000;
+-int update = 0;
++int update = 1;
+ int infinite = 0;
+ 
+ typedef struct progress_t {
+@@ -393,6 +393,16 @@ void *update_progress(void *param) {
+ 	return (void *)NULL;
+ }
+ 
++void main_tpl_read(void) {
++	if (template)
++		return;
++	if(template_read(template_file) == EXIT_FAILURE) {
++		logprintf(LOG_NOTICE, "failed to read template file %s", template_file);
++		main_gc();
++		exit(EXIT_FAILURE);
++	}
++}
++
+ void main_draw(void) {
+ 	struct template_t *tmp_tpl = template;
+ 	char *image = NULL, *ext = NULL;
+@@ -529,13 +539,25 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+ 
+ 	getpeername(sd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
+ 
+-	if(json_find_string(json, "black", &message) == 0) {
++	if(json_find_string(json, "exit", &message) == 0) {
++		fb_unblank();
++		exit(main_gc());
++	} else if(json_find_string(json, "black", &message) == 0) {
+ 		if(black == 0) {
+-			black = 1;
++			percentage = 100;
+ 			draw_loop = 0;
+-			usleep((__useconds_t)speed);
+-			main_draw_black();
++			pthread_mutex_lock(&progress_lock);
++			black = 1;
++			//usleep((__useconds_t)speed);
++			fb_clear_screen();
++			fb_free_zmap();
++			fb_unlock();
++			template_gc();
++			pthread_mutex_unlock(&progress_lock);
++			pthread_cond_signal(&progress_signal);
+ 		} else {
++			fb_unblank();
++			main_tpl_read();
+ 			main_draw();
+ 			black = 0;
+ 		}
+@@ -543,6 +565,8 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+ 		if(json_find_string(json, "percentage", &message) == 0) {
+ 			if(black == 1) {
+ 				progress_active = 0;
++				fb_unblank();
++				main_tpl_read();
+ 				main_draw();
+ 				black = 0;
+ 			}
+@@ -556,6 +580,8 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+ 		} else if(json_find_string(json, "infinite", &message) == 0) {
+ 			if(black == 1) {
+ 				progress_active = 0;
++				fb_unblank();
++				main_tpl_read();
+ 				main_draw();
+ 				black = 0;
+ 			}
+@@ -576,6 +602,8 @@ void socket_parse_data(int i, char buffer[BUFFER_SIZE]) {
+ 				tmp_tpl = tmp_tpl->next;
+ 			}
+ 			if(black == 1) {
++				fb_unblank();
++				main_tpl_read();
+ 				main_draw();
+ 				black = 0;
+ 			}
+@@ -617,7 +645,7 @@ void deamonize(void) {
+ 		default:
+ 			save_pid(npid);
+ 			logprintf(LOG_INFO, "daemon started with pid: %d", npid);
+-			exit(0);
++			_exit(0);
+ 		break;
+ 	}
+ }
+@@ -662,6 +690,7 @@ int main_gc(void) {
+ }
+ 
+ int main(int argc, char **argv) {
++	template = NULL;
+ 	/* Run main garbage collector when quiting the daemon */
+ 	gc_attach(main_gc);
+ 
+@@ -730,7 +759,7 @@ int main(int argc, char **argv) {
+ 	template_file = malloc(14);
+ 	strcpy(template_file, "template.json");
+ 
+-	if((f = open(pid_file, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)) != -1) {
++	if((f = open(pid_file, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) != -1) {
+ 		if(read(f, buffer, BUFFER_SIZE) != -1) {
+ 			//If the file is empty, create a new process
+ 			if(!atoi(buffer)) {
+@@ -762,18 +791,12 @@ int main(int argc, char **argv) {
+ 
+ 	if(nodaemon == 0) {
+ 		deamonize();
+-		socket_start(PORT);
+ 		fb_init();
++		socket_start(PORT);
+ 	} else {
+ 		socket_start(PORT);
+ 	}
+ 
+-	if(template_read(template_file) == EXIT_FAILURE) {
+-		logprintf(LOG_NOTICE, "failed to read template file %s", template_file);
+-		main_gc();
+-		return EXIT_FAILURE;
+-	}
+-
+ 	if(nodaemon == 1) {
+ 		//template_print();
+ 	}
+@@ -785,6 +808,7 @@ int main(int argc, char **argv) {
+     socket_callback.client_connected_callback = NULL;
+     socket_callback.client_data_callback = &socket_parse_data;
+ 
++	main_tpl_read();
+ 	main_draw();
+ 
+ 	/* Make sure the server part is non-blocking by creating a new thread */
+diff --git a/libs/Makefile b/libs/Makefile
+deleted file mode 100644
+index 8622463..0000000
+--- a/libs/Makefile
++++ /dev/null
+@@ -1,47 +0,0 @@
+-GCC = $(CROSS_COMPILE)gcc
+-SYS := $(shell $(GCC) -dumpmachine)
+-ifneq (, $(findstring x86_64, $(SYS)))
+-	OSFLAGS = -Ofast -fPIC -march=native -mtune=native -mfpmath=sse -Wconversion -Wunreachable-code -Wstrict-prototypes 
+-endif
+-ifneq (, $(findstring arm, $(SYS)))
+-	ifneq (, $(findstring gnueabihf, $(SYS)))
+-		OSFLAGS = -Ofast -mfloat-abi=hard -mfpu=vfp -march=armv6 -Wconversion -Wunreachable-code -Wstrict-prototypes 
+-	endif
+-	ifneq (, $(findstring gnueabi, $(SYS)))
+-		OSFLAGS = -Ofast -mfloat-abi=hard -mfpu=vfp -march=armv6 -Wconversion -Wunreachable-code -Wstrict-prototypes 
+-	endif	
+-	ifneq (, $(findstring gnueabisf, $(SYS)))
+-		OSFLAGS = -Ofast -mfloat-abi=soft -mfpu=vfp -march=armv6 -Wconversion -Wunreachable-code -Wstrict-prototypes 
+-	endif
+-endif
+-ifneq (, $(findstring amd64, $(SYS)))
+-	OSFLAGS = -O3 -fPIC -march=native -mtune=native -mfpmath=sse -Wno-conversion
+-endif
+-CFLAGS =-ffast-math $(OSFLAGS) -Wfloat-equal -Wshadow -Wpointer-arith -Wcast-align -Wstrict-overflow=5 -Wwrite-strings -Waggregate-return -Wcast-qual -Wswitch-default -Wswitch-enum -Wformat=2 -g -Wall -isystem. -isystem.. -isystem/usr/include/freetype2/
+-SRC = $(wildcard *.c)
+-OBJS = $(SRC:.c=.o)
+-
+-all: json.o draw.o $(OBJS) libs.o
+-
+-json.o: json.c json.h
+-	$(GCC) -ffast-math $(OSFLAGS) -Wno-conversion -g -isystem. -isystem.. -c $(patsubst %.o,%.c,$@)
+-	
+-lodepng.o: lodepng.c lodepng.h
+-	$(GCC) -ffast-math $(OSFLAGS) -Wno-conversion -g -isystem. -isystem.. -c $(patsubst %.o,%.c,$@)
+-
+-draw.o: draw.c draw.h
+-	$(GCC) $(CFLAGS) -isystem/usr/include/ -c $(patsubst %.o,%.c,$@)
+-
+-template.o: template.c template.h
+-	$(GCC) $(CFLAGS) -isystem/usr/include/ -c $(patsubst %.o,%.c,$@)
+-	
+-%.o: %.c %.h
+-	$(GCC) $(CFLAGS) -c $(patsubst %.o,%.c,$@)
+-
+-libs.o: $(OBJS)
+-	$(CROSS_COMPILE)ld -L/usr/local/lib -r $(OBJS) -o libs.o
+-
+-dist-clean: clean
+-
+-clean:
+-	rm *.o >/dev/null 2>&1 || true
+\ No newline at end of file
+diff --git a/libs/common.h b/libs/common.h
+index 3b7ecee..b9f46f9 100644
+--- a/libs/common.h
++++ b/libs/common.h
+@@ -24,6 +24,8 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ 
+ #include "log.h"
+ 
++#include <pthread.h>
++
+ char *progname;
+ int filelog;
+ int shelllog;
+diff --git a/libs/config.h b/libs/config.h
+index b106c19..aee536b 100644
+--- a/libs/config.h
++++ b/libs/config.h
+@@ -21,14 +21,14 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ #define _CONFIG_H_
+ 
+ #define PORT 				9999
+-#define MAX_CLIENTS			30
++#define MAX_CLIENTS			2
+ #define BUFFER_SIZE			1025
+ #define BIG_BUFFER_SIZE		1025
+ #define ZINDEXES			4
+ #define DEFAULT_FB			"/dev/fb0"
+ 
+-#define PID_FILE			"/var/run/splash-daemon.pid"
+-#define LOG_FILE			"/var/log/splash-daemon.log"
++#define PID_FILE			"/run/splash/splash.pid"
++#define LOG_FILE			"/run/splash-daemon.log"
+ 
+ char *progname;
+ 
+diff --git a/libs/fb.c b/libs/fb.c
+index 84d1628..4ecfc76 100644
+--- a/libs/fb.c
++++ b/libs/fb.c
+@@ -51,16 +51,21 @@ static struct fb_cmap ocmap = {0, 256, ored, ogreen, oblue};
+ unsigned long screensize = 0;
+ int fbfd = 0;
+ int tty = 0;
+-int orig_vt_no = 0;
++int orig_vt_no = 0, vtno = -1;
+ int kd_mode;
+ unsigned long fb_mem_offset = 0;
+ 
+ char *fbp = 0;
+ 
+ unsigned int ***zmap = NULL;
++
++char vtname[12];
++
++size_t zmap_width;
+ 
+ void fb_init_zmap(void) {
+     size_t zindexes = ZINDEXES, width = fb_width(), height = fb_height();
++    zmap_width = fb_width();
+     int a = 0, b = 0;
+  
+     if(!(zmap = calloc(zindexes, sizeof(int**)))) {
+@@ -83,8 +88,29 @@ void fb_init_zmap(void) {
+     }
+ }
+ 
++void fb_free_zmap(void) {
++    if (fbp) {
++        msync(fbp, finfo.smem_len+fb_mem_offset, MS_SYNC);
++        munmap(fbp, finfo.smem_len+fb_mem_offset);
++        fbp = 0;
++    }
++
++    size_t zindexes = ZINDEXES, width = zmap_width;
++    int a = 0, b = 0;
++
++    if (zmap == NULL)
++        return;
++
++    logprintf(LOG_NOTICE, "freeing width %d, zindex %d.", width, zindexes);
++    for(a=0;a<zindexes;a++) {
++        for(b=0;b<width;b++)
++            free(zmap[a][b]);
++    }
++    zmap = NULL;
++}
++
+ void fb_memset(void *addr, int c, size_t len) {
+-#if 1
++#if 0
+     unsigned int i, *p;
+ 
+     i = (c & 0xff) << 8;
+@@ -97,10 +123,18 @@ void fb_memset(void *addr, int c, size_t len) {
+ #endif
+ }
+ 
++
++void reopen_tty()
++{
++  if (tty)
++    close(tty);
++  tty = open(vtname, O_RDWR);
++  setsid();
++}
++
+ void fb_setvt(void) {
+-	int vtno = -1;
+     struct vt_stat vts;
+-    char vtname[12];
++    int i;
+ 
+ 	int cur_tty = open("/dev/tty0", O_RDWR);
+ 	if(cur_tty == -1) {
+@@ -111,12 +145,15 @@ void fb_setvt(void) {
+ 	if(ioctl(cur_tty, VT_GETSTATE, &vts) == -1) {
+ 		logprintf(LOG_ERR, "VT_GETSTATE failed on /dev/tty0");
+ 		exit(EXIT_FAILURE);
++	} else {
++		logprintf(LOG_NOTICE, "VT open mask is %x", vts.v_state);
+ 	}
+ 
+ 	orig_vt_no = vts.v_active;
+ 
+ 	if(ioctl(cur_tty, VT_OPENQRY, &vtno) == -1) {
+ 		logprintf(LOG_ERR, "no open ttys available");
++		exit(EXIT_FAILURE);
+ 	}
+ 
+ 	if(close(cur_tty) == -1) {
+@@ -124,12 +161,12 @@ void fb_setvt(void) {
+ 		exit(EXIT_FAILURE);
+ 	}
+ 
+-    if(vtno < 0) {
+-		if(ioctl(tty, VT_OPENQRY, &vtno) == -1 || vtno == -1) {
+-			logprintf(LOG_ERR, "ioctl VT_OPENQRY");
+-			exit(EXIT_FAILURE);
+-		}
+-    }
++	// look for free vt above tty3 as on tty2 we get getty with login later
++	for(i=4; i < 12; i++) {
++		if((vts.v_state & (1 << i)) == 0)
++			vtno = i;
++			break;
++	}
+ 
+     vtno &= 0xff;
+     sprintf(vtname, "/dev/tty%d", vtno);
+@@ -138,16 +175,11 @@ void fb_setvt(void) {
+ 		logprintf(LOG_ERR, "access %s: %s\n", vtname,strerror(errno));
+ 		exit(EXIT_FAILURE);
+     }
++    logprintf(LOG_NOTICE, "using tty %s", vtname);
+ 
+     close(tty);
+-    close(0);
+-    close(1);
+-    close(2);
+ 
+-	setsid();
+-	open(vtname, O_RDWR);
+-	dup(0);
+-    dup(0);
++    reopen_tty();
+ 
+     if(ioctl(tty, VT_GETSTATE, &vts) == -1) {
+ 		logprintf(LOG_ERR, "ioctl VT_GETSTATE");
+@@ -165,23 +197,19 @@ void fb_setvt(void) {
+ 		logprintf(LOG_ERR, "ioctl VT_WAITACTIVE");
+ 		exit(EXIT_FAILURE);
+     }
++
+ }
+ 
+ void fb_cleanup(void) {
+-    if(ioctl(tty, KDSETMODE, kd_mode) == -1)
+-		logprintf(LOG_ERR, "ioctl KDSETMODE");
+ 
+-    if(ioctl(fbfd, FBIOPUT_VSCREENINFO, &ovinfo) == -1)
+-		logprintf(LOG_ERR, "ioctl FBIOPUT_VSCREENINFO");
++    reopen_tty();
++    if(ioctl(tty, KDSETMODE, KD_TEXT) == -1)
++		logprintf(LOG_ERR, "ioctl KDSETMODE");
+ 
+-    if(ioctl(fbfd, FBIOGET_FSCREENINFO, &finfo) == -1)
+-		logprintf(LOG_ERR, "ioctl FBIOGET_FSCREENINFO");
++//    if(ioctl(fbfd, FBIOPUT_VSCREENINFO, &ovinfo) == -1)
++//		logprintf(LOG_ERR, "ioctl FBIOPUT_VSCREENINFO");
+ 
+-	if(ovinfo.bits_per_pixel == 8 || finfo.visual == FB_VISUAL_DIRECTCOLOR) {
+-		if(ioctl(fbfd, FBIOPUTCMAP, &ocmap) == -1)
+-			logprintf(LOG_ERR, "ioctl FBIOPUTCMAP");
+-	}
+-	close(fbfd);
++    close(fbfd);
+ 
+     if(orig_vt_no && ioctl(tty, VT_ACTIVATE, orig_vt_no) == -1)
+ 		logprintf(LOG_ERR, "ioctl VT_ACTIVATE");
+@@ -189,7 +217,7 @@ void fb_cleanup(void) {
+     if(orig_vt_no && ioctl(tty, VT_WAITACTIVE, orig_vt_no) == -1)
+ 		logprintf(LOG_ERR, "ioctl VT_WAITACTIVE");
+ 
+-    tcsetattr(tty, TCSANOW, &term);
++//    tcsetattr(tty, TCSANOW, &term);
+     close(tty);
+ }
+ 
+@@ -201,19 +229,64 @@ void fb_clear_screen(void) {
+ 	fb_memset(fbp, 0, finfo.line_length * vinfo.yres);
+ }
+ 
++void fb_unblank(void) {
++    unsigned long page_mask;
++
++    reopen_tty();
++    if(ioctl(tty, VT_ACTIVATE, vtno) == -1)
++	logprintf(LOG_ERR, "ioctl VT_ACTIVATE");
++    if(ioctl(tty, VT_WAITACTIVE, vtno) == -1)
++	logprintf(LOG_ERR, "ioctl VT_WAITACTIVE");
++
++    if(ioctl(tty, KDSETMODE, KD_TEXT) == -1) {
++	logprintf(LOG_ERR, "ioctl KDSETMODE");
++    }
++    if(ioctl(tty, KDSETMODE, KD_GRAPHICS | VT_AUTO) == -1) {
++	logprintf(LOG_ERR, "ioctl KDSETMODE");
++    }
++
++    if(ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo) == -1) {
++		logprintf(LOG_ERR,"ioctl FBIOGET_VSCREENINFO");
++		exit(EXIT_FAILURE);
++    }
++    if(ioctl(fbfd, FBIOGET_FSCREENINFO, &finfo) == -1) {
++		logprintf(LOG_ERR, "ioctl FBIOGET_FSCREENINFO");
++		exit(EXIT_FAILURE);
++    }
++    screensize = vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8;
++
++    page_mask = (unsigned long)getpagesize()-1;
++ 
++
++    if(zmap == NULL)
++	fb_init_zmap();
++
++    fb_mem_offset = (unsigned long)(finfo.smem_start) & page_mask;
++    fbp = (char *)mmap(0, finfo.smem_len+fb_mem_offset, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
++
++    if((int)fbp == -1) {
++        logprintf(LOG_ERR, "failed to map frame buffer device to memory");
++        exit(EXIT_FAILURE);
++    }
++
++    fb_clear_mem();
++    close(tty);
++}
++
+ int fb_gc(void) {
+-	fb_clear_mem();
++	fb_unlock();
++	fb_unblank();
+ 	fb_clear_screen();
++	fb_clear_mem();
++	fb_free_zmap();
+ 	fb_cleanup();
+-	sfree((void *)&zmap);
+-	close(fbfd);
+ 	return EXIT_SUCCESS;
+ }
+ 
+ void fb_init(void) {
+ 
+ 	unsigned long page_mask;
+-    struct vt_stat vts;
++	struct vt_stat vts;
+ 	
+ 	fb_setvt();
+ 	
+@@ -254,7 +327,7 @@ void fb_init(void) {
+ 		exit(EXIT_FAILURE);
+     }
+ 
+-    tcgetattr(tty, &term);
++//    tcgetattr(tty, &term);
+ 
+     if(ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo) == -1) {
+ 		logprintf(LOG_ERR,"ioctl FBIOGET_VSCREENINFO");
+@@ -273,19 +346,38 @@ void fb_init(void) {
+     fbp = (char *)mmap(0, finfo.smem_len+fb_mem_offset, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+ 
+ 	if((int)fbp == -1) {
+-        logprintf(LOG_ERR, "failed to map framebuffer device to memory");
++        logprintf(LOG_ERR, "failed to map frame buffer device to memory");
+         exit(EXIT_FAILURE);
+     }
+- 
+-	if(ioctl(tty, KDSETMODE, KD_GRAPHICS) == -1) {
+-		logprintf(LOG_ERR, "ioctl KDSETMODE");
+-		fb_cleanup();
+-		exit(EXIT_FAILURE);
++
++// don't lock console
++
++    if(ioctl(tty, KDSETMODE, VT_AUTO/*KD_GRAPHICS | VT_AUTO*/) == -1) { //VT_PROCESS
++	logprintf(LOG_ERR, "ioctl KDSETMODE");
++	fb_cleanup();
++	exit(EXIT_FAILURE);
+     }
+ 
+-	fb_memset(fbp+fb_mem_offset, 0, finfo.line_length * vinfo.yres);
+-	
+-	fb_init_zmap();
++    fb_memset(fbp+fb_mem_offset, 0, finfo.line_length * vinfo.yres);
++
++    fb_init_zmap();
++
++    close(tty);
++}
++
++void fb_unlock() {
++	return;
++
++    if(ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo) == -1) {
++		logprintf(LOG_ERR,"ioctl FBIOGET_VSCREENINFO");
++		exit(EXIT_FAILURE);
++    }
++
++/*	if(ioctl(tty, KDSETMODE, VT_AUTO) == -1) {
++		logprintf(LOG_ERR, "ioctl KDSETMODE -------");
++		fb_cleanup();
++		exit(EXIT_FAILURE);
++	}*/
+ }
+ 
+ unsigned long fb_get_location(int x, int y) {
+@@ -312,13 +404,13 @@ void fb_rm_pixel(int x, int y, int z, unsigned int color) {
+ 		}
+ 	}
+ 
+-	if((fbp + location)) 
+-        {
+-                if(vinfo.bits_per_pixel == 16)
+-                        *((unsigned short*)((unsigned long)fbp + location)) = (unsigned short) color & 0xFFFF;
+-                else
+-                        *((unsigned int*)((unsigned long)fbp + location)) = color;
+-        }
++	if((fbp + location)) 
++        {
++                if(vinfo.bits_per_pixel == 16)
++                        *((unsigned short*)((unsigned long)fbp + location)) = (unsigned short) color & 0xFFFF;
++                else
++                        *((unsigned int*)((unsigned long)fbp + location)) = color;
++        }
+ }
+ 
+ 
+@@ -329,7 +421,6 @@ void fb_put_pixel(int x, int y, int z, unsigned int color) {
+ 	if(color == 0) {
+ 		color = 1;
+ 	}
+-
+ 
+ 	if(z > -1) {
+ 		if(z > ZINDEXES) {
+@@ -348,13 +439,13 @@ void fb_put_pixel(int x, int y, int z, unsigned int color) {
+ 		}
+ 	}
+ 
+-	if((fbp + location)) 
+-        {
+-                if(vinfo.bits_per_pixel == 16)
+-                        *((unsigned short*)((unsigned long)fbp + location)) = (unsigned short) color & 0xFFFF;
+-                else
+-                        *((unsigned int*)((unsigned long)fbp + location)) = color;
+-        }
++	if((fbp + location)) 
++        {
++                if(vinfo.bits_per_pixel == 16)
++                        *((unsigned short*)((unsigned long)fbp + location)) = (unsigned short) color & 0xFFFF;
++                else
++                        *((unsigned int*)((unsigned long)fbp + location)) = color;
++        }
+ }
+ 
+ unsigned long fb_width2px(int i) {
+diff --git a/libs/fb.h b/libs/fb.h
+index cc4bb52..db8454e 100644
+--- a/libs/fb.h
++++ b/libs/fb.h
+@@ -22,10 +22,12 @@ Various functions used in this file are derived from fbi (Gerd Hoffmann <gerd@kr
+ #ifndef _FB_H_
+ #define _FB_H_
+ 
++void fb_free_zmap(void);
+ void fb_memset(void *addr, int c, size_t len);
+ void fb_setvt(void);
+ void fb_cleanup(void);
+ void fb_clear_mem(void);
++void fb_unblank(void);
+ void fb_clear_screen(void);
+ void fb_init(void);
+ int fb_gc(void);
+@@ -40,6 +42,6 @@ unsigned short fb_bpp(void);
+ unsigned short fb_roffset(void);
+ unsigned short fb_goffset(void);
+ unsigned short fb_boffset(void);
+-
++void fb_unlock(void);
+ 
+ #endif
+diff --git a/libs/gc.c b/libs/gc.c
+index 2ad63c5..771303e 100644
+--- a/libs/gc.c
++++ b/libs/gc.c
+@@ -53,8 +53,8 @@ void gc_clear(void) {
+ 	sfree((void *)&gc);
+ }
+ 
+-/* Run the GC manually */
+-int gc_run(void) {
++/* Run the GC manually */
++int gc_run(void) {
+     unsigned int s;
+ 	struct collectors_t *tmp = gc;
+ 
+@@ -92,7 +92,7 @@ void gc_catch(void) {
+     sigaction(SIGBUS,  &act, &old);
+     sigaction(SIGILL,  &act, &old);
+     sigaction(SIGSEGV, &act, &old);
+-	sigaction(SIGFPE,  &act, &old);	
++    sigaction(SIGFPE,  &act, &old);
+ 
+     if(sigsetjmp(gc_cleanup, 0) == 0)
+ 		return;
+diff --git a/libs/socket.c b/libs/socket.c
+index 2347476..0b2502b 100644
+--- a/libs/socket.c
++++ b/libs/socket.c
+@@ -30,6 +30,13 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ #include <netdb.h>
+ #include <arpa/inet.h>
+ 
++#include <stddef.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <fcntl.h>
++
+ #include "common.h"
+ #include "log.h"
+ #include "gc.h"
+@@ -54,29 +61,45 @@ int socket_start(unsigned short port) {
+ 	//gc_attach(socket_gc);
+ 
+ 	int opt = 1;
+-    struct sockaddr_in address;
++	int no = 0;
++    struct sockaddr_in6 address;
+ 
+     //create a master socket
+-    if((serverSocket = socket(AF_INET , SOCK_STREAM , 0)) == 0)  {
+-        logprintf(LOG_ERR, "could not create new socket");
+-        exit(EXIT_FAILURE);
+-    }
++    if((serverSocket = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)) < 0)  {
++        if((serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)  {
++            logprintf(LOG_ERR, "could not create new socket");
++            exit(EXIT_FAILURE);
++        }
++    } else {
++        if(setsockopt(serverSocket, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&no, sizeof(no)) < 0) {
++            logprintf(LOG_ERR, "could not set dual stack");
++            exit(EXIT_FAILURE);
++        }
++    }
+ 
+     //set master socket to allow multiple connections , this is just a good habit, it will work without this
+     if(setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0 ) {
+         logprintf(LOG_ERR, "could not set proper socket options");
+         exit(EXIT_FAILURE);
+     }
++
++//    logprintf(LOG_ERR, "nonblock %d", fcntl(serverSocket, F_SETFL, O_NONBLOCK));
+ 
+     //type of socket created
+-    address.sin_family = AF_INET;
+-    address.sin_addr.s_addr = INADDR_ANY;
+-    address.sin_port = htons(port);
++    address.sin6_family = AF_INET6;
++    address.sin6_addr = in6addr_any;
++    address.sin6_port = htons(port);
+ 
+     //bind the socket to localhost
+-    if (bind(serverSocket, (struct sockaddr *)&address, sizeof(address)) < 0) {
+-        logprintf(LOG_ERR, "cannot bind to socket port %d, address already in use?", address);
+-        exit(EXIT_FAILURE);
++    if (bind(serverSocket, (struct sockaddr *)&address, sizeof(struct sockaddr_in6)) < 0) {
++        struct sockaddr_in address;
++        address.sin_family = AF_INET;
++        address.sin_addr.s_addr = INADDR_ANY;
++        address.sin_port = htons(port);
++        if (bind(serverSocket, (struct sockaddr *)&address, sizeof(struct sockaddr_in)) < 0) {
++            logprintf(LOG_ERR, "cannot bind to socket port %d, address already in use? %s %d", port, strerror(errno), errno);
++            exit(EXIT_FAILURE);
++        }
+     }
+ 
+     //try to specify maximum of 3 pending connections for the master socket
+@@ -130,13 +153,15 @@ void socket_close(int sockfd) {
+ 		getpeername(sockfd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
+ 		logprintf(LOG_INFO, "client disconnected, ip %s, port %d", inet_ntoa(address.sin_addr), ntohs(address.sin_port));				
+ 
++		shutdown(sockfd, SHUT_RDWR);
++		close(sockfd);
++
+ 		for(i=0;i<MAX_CLIENTS;i++) {
+ 			if(socket_clients[i] == sockfd) {
+ 				socket_clients[i] = 0;
+ 				break;
+ 			}
+ 		}
+-		close(sockfd);
+ 	}
+ }
+ 
+@@ -151,13 +176,18 @@ void socket_write(int sockfd, const char *msg, ...) {
+ 		va_end(ap);
+ 		strcat(sendBuff, "\n");
+ 
+-		if(send(sockfd, sendBuff, strlen(sendBuff), MSG_NOSIGNAL) == -1) {
++		if(send(sockfd, sendBuff, strlen(sendBuff), MSG_MORE/*MSG_NOSIGNAL*/) == -1) {
+ 			logprintf(LOG_DEBUG, "socket write failed: %s", sendBuff);
++			shutdown(sockfd, SHUT_RDWR);
+ 			socket_close(sockfd);
+ 		} else {
+ 			if(strcmp(sendBuff, "BEAT\n") != 0) {
+ 				logprintf(LOG_DEBUG, "socket write succeeded: %s", sendBuff);
+ 			}
++			memset(sendBuff, '\0', BUFFER_SIZE);
++			read(sockfd, sendBuff, BUFFER_SIZE);
++			if(strcmp(sendBuff, "DONE\n") == 0)
++				logprintf(LOG_DEBUG, "socket write got CONFIRM");
+ 		}
+ 		usleep(100);
+ 	}
+@@ -176,6 +206,7 @@ void socket_write_big(int sockfd, const char *msg, ...) {
+ 
+ 		if(send(sockfd, sendBuff, strlen(sendBuff), MSG_NOSIGNAL) == -1) {
+ 			logprintf(LOG_DEBUG, "socket write failed: %s", sendBuff);
++			shutdown(sockfd, SHUT_RDWR);
+ 			socket_close(sockfd);
+ 		} else {
+ 			if(strcmp(sendBuff, "BEAT\n") != 0) {
+@@ -208,7 +239,6 @@ char *socket_read_big(int sockfd) {
+ 
+ void *socket_wait(void *param) {
+ 	struct socket_callback_t *socket_callback = (struct socket_callback_t *)param;
+-
+ 	int activity;
+ 	int i, n, sd;
+     int max_sd;
+@@ -269,6 +299,7 @@ void *socket_wait(void *param) {
+         }
+ 
+         //else its some IO operation on some other socket :)
++	else
+         for(i=0;i<MAX_CLIENTS;i++) {
+ 			sd = socket_clients[i];
+ 
+@@ -283,11 +314,12 @@ void *socket_wait(void *param) {
+ 					if(socket_callback->client_disconnected_callback)
+ 						socket_callback->client_disconnected_callback(i);
+ 					//Close the socket and mark as 0 in list for reuse
++					shutdown(sd, SHUT_RDWR);
+ 					close(sd);
+ 					socket_clients[i] = 0;
+                 } else {
+                     //set the string terminating NULL byte on the end of the data read
+-                    //readBuff[n] = '\0';
++//                    readBuff[n] = '\0';
+ 
+ 					if(n > -1 && socket_callback->client_data_callback) {
+ 						char *pch = strtok(readBuff, "\n");
+@@ -296,6 +328,7 @@ void *socket_wait(void *param) {
+ 							pch = strtok(NULL, "\n");
+ 						}
+ 						sfree((void *)&pch);
++						write(sd, "DONE\n", 5);
+ 					}
+                 }
+             }
+@@ -303,3 +336,4 @@ void *socket_wait(void *param) {
+     }
+ 	return NULL;
+ }
++
+diff --git a/libs/template.c b/libs/template.c
+index 0ded4c5..cfa41b0 100644
+--- a/libs/template.c
++++ b/libs/template.c
+@@ -710,6 +710,7 @@ int template_gc(void) {
+ 		free(ttmp);
+ 	}
+ 	free(template);
++	template = NULL;
+ 	
+ 	logprintf(LOG_DEBUG, "garbage collected template library");
+ 	
+@@ -795,4 +796,4 @@ int template_read(char *templatefile) {
+ 	free(content);
+ 	template_reverse_struct(&template);
+ 	return EXIT_SUCCESS;
+-}
+\ No newline at end of file
++}
+diff --git a/libs/template.h b/libs/template.h
+index 1037fd9..4972935 100644
+--- a/libs/template.h
++++ b/libs/template.h
+@@ -74,4 +74,4 @@ int template_get_setting_string(struct template_t *tnode, const char *name, char
+ int template_get_setting_number(struct template_t *tnode, const char *name, int *out);
+ int template_get_setting_color(struct template_t *tnode, const char *name, unsigned short **out);
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/send.c b/send.c
+index 77dad04..4d55609 100644
+--- a/send.c
++++ b/send.c
+@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
+ 
+ 	log_file_disable();
+ 	log_shell_enable();
+-	log_level_set(LOG_NOTICE);
++	log_level_set(LOG_ERR);
+ 
+ 	progname = malloc(12);
+ 	strcpy(progname, "splash-send");
+@@ -46,9 +46,10 @@ int main(int argc, char **argv) {
+ 	int black = 0;
+ 	int percentage = -1;
+ 	int infinite = 0;
++	int doexit = 0;
+ 	struct options_t *options = NULL;
+ 	char *args = NULL;
+-    char *broadcast = NULL;
++	char *broadcast = NULL;
+ 
+ 	char server[16] = "127.0.0.1";
+ 	unsigned short port = PORT;
+@@ -62,6 +63,7 @@ int main(int argc, char **argv) {
+ 	options_add(&options, 'p', "percentage", has_value, 0, "^([0-9]|[1-9][0-9]|100)$");
+ 	options_add(&options, 'i', "infinite", no_value, 0, "^([0-9]|[1-9][0-9]|100)$");
+ 	options_add(&options, 'b', "black", no_value, 0, NULL);
++	options_add(&options, 'e', "exit", no_value, 0, NULL);
+ 
+ 	/* Store all CLI arguments for later usage
+ 	   and also check if the CLI arguments where
+@@ -82,6 +84,7 @@ int main(int argc, char **argv) {
+ 				printf("\t -p --percentage=percentage\tprogress percentage\n");
+ 				printf("\t -i --infinite\t\t\tactivate the infinite bar\n");
+ 				printf("\t -b --black\t\t\tblacken out the splash\n");
++				printf("\t -e --exit\t\t\texit main daemon\n");
+ 				exit(EXIT_SUCCESS);
+ 			break;
+ 			case 'V':
+@@ -104,6 +107,9 @@ int main(int argc, char **argv) {
+ 			case 'p':
+ 					percentage = atoi(args);
+ 			break;
++			case 'e':
++					doexit = 1;
++			break;
+ 			case 'P':
+ 				port = (unsigned short)atoi(args);
+ 			break;
+@@ -119,6 +125,7 @@ int main(int argc, char **argv) {
+ 		logprintf(LOG_ERR, "could not connect to splash-daemon");
+ 		goto close;
+ 	}
++//	fcntl(sockfd, F_SETFL, O_NONBLOCK);
+ 
+ 	JsonNode *json = json_mkobject();
+ 	if(black) {
+@@ -134,6 +141,8 @@ int main(int argc, char **argv) {
+ 		if(broadcast) {
+ 			json_append_member(json, "message", json_mkstring(broadcast));
+ 		}
++		if(doexit)
++			json_append_member(json, "exit", json_mkstring("1"));
+ 	}
+ 	char *output = json_stringify(json, NULL);
+ 	socket_write(sockfd, output);
