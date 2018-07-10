@@ -1,0 +1,13 @@
+diff --git a/daemon.c b/daemon.c
+index 8adc6f2..d3757de 100644
+--- a/daemon.c
++++ b/daemon.c
+@@ -687,7 +712,7 @@ int main(int argc, char **argv) {
+ 	struct socket_callback_t socket_callback;
+ 	struct options_t *options = NULL;
+ 	char *args = NULL;
+-	char buffer[BUFFER_SIZE];
++	char buffer[BUFFER_SIZE] = "0";
+ 	int f;
+ 
+ 	options_add(&options, 'H', "help", no_value, 0, NULL);
