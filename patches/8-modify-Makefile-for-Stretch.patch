@@ -1,0 +1,11 @@
+--- a/Makefile	2018-07-05 21:23:58.914847324 +0200
++++ b/Makefile	2018-07-05 20:53:22.148599577 +0200
+@@ -41,7 +41,7 @@
+ 	$(GCC) -c $(CFLAGS) $(INCLUDE) $(LIBS) -o .libs/
+ 
+ splash-daemon-static: daemon.c $(INCLUDES)
+-	$(GCC) $(CFLAGS)  $(wildcard libs/*.c) $(LIBS) -lpng -lm -static -o $@ daemon.c
++	$(GCC) $(CFLAGS)  $(wildcard libs/*.c) $(LIBS) -lpng -lfreetype -ljpeg -lpthread -lm -lz -static -o $@ daemon.c
+ 	strip splash-daemon-static
+ 	
+ splash-daemon: daemon.c $(INCLUDES)
