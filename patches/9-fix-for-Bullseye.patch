@@ -1,0 +1,203 @@
+From 46bfc05131f8641fcefcac63a14a65fb2e4a776e Mon Sep 17 00:00:00 2001
+From: mkreisl <manfred.kreisl@nexgo.de>
+Date: Tue, 21 Nov 2023 14:29:23 +0100
+Subject: [PATCH] Fix for Bullseye
+
+---
+ daemon.c        |  2 ++
+ globals.h       | 21 +++++++++++++++++++++
+ libs/common.h   | 10 +++++-----
+ libs/config.h   |  2 +-
+ libs/fcache.h   |  2 +-
+ libs/gc.h       |  2 +-
+ libs/socket.h   |  6 +++---
+ libs/template.h |  2 +-
+ send.c          |  2 ++
+ 9 files changed, 37 insertions(+), 12 deletions(-)
+ create mode 100644 globals.h
+
+diff --git a/daemon.c b/daemon.c
+index 8adc6f2..f0025a4 100644
+--- a/daemon.c
++++ b/daemon.c
+@@ -45,6 +45,8 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ #include "template.h"
+ #include "fcache.h"
+ 
++#include "globals.h"
++
+ /* The pid_file and pid of this daemon */
+ char *pid_file;
+ pid_t pid;
+diff --git a/globals.h b/globals.h
+new file mode 100644
+index 0000000..87fcbc5
+--- /dev/null
++++ b/globals.h
+@@ -0,0 +1,21 @@
++// common.h
++char *progname;
++int filelog;
++int shelllog;
++int loglevel;
++char debug_log[128];
++
++// gc.h
++struct collectors_t *gc;
++
++// fcache.h
++struct fcache_t *fcache;
++
++// socket.h
++int serverSocket;
++int clientSocket;
++int socket_clients[MAX_CLIENTS];
++
++// template.h
++struct template_t *template;
++
+diff --git a/libs/common.h b/libs/common.h
+index 3b7ecee..4d5c902 100644
+--- a/libs/common.h
++++ b/libs/common.h
+@@ -24,11 +24,11 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ 
+ #include "log.h"
+ 
+-char *progname;
+-int filelog;
+-int shelllog;
+-int loglevel;
+-char debug_log[128];
++extern char *progname;
++extern int filelog;
++extern int shelllog;
++extern int loglevel;
++extern char debug_log[128];
+ 
+ void logmarkup(void);
+ 
+diff --git a/libs/config.h b/libs/config.h
+index b106c19..c59e9f7 100644
+--- a/libs/config.h
++++ b/libs/config.h
+@@ -30,6 +30,6 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ #define PID_FILE			"/var/run/splash-daemon.pid"
+ #define LOG_FILE			"/var/log/splash-daemon.log"
+ 
+-char *progname;
++extern char *progname;
+ 
+ #endif
+diff --git a/libs/fcache.h b/libs/fcache.h
+index e79e690..6f75b83 100644
+--- a/libs/fcache.h
++++ b/libs/fcache.h
+@@ -27,7 +27,7 @@ typedef struct fcache_t {
+ 	struct fcache_t *next;
+ } fcaches_t;
+ 
+-struct fcache_t *fcache;
++extern struct fcache_t *fcache;
+ 
+ int fcache_gc(void);
+ int fcache_add(char *filename);
+diff --git a/libs/gc.h b/libs/gc.h
+index 8cba0a4..bc448fd 100644
+--- a/libs/gc.h
++++ b/libs/gc.h
+@@ -25,7 +25,7 @@ typedef struct collectors_t {
+ 	struct collectors_t *next;
+ } collectors_t;
+ 
+-struct collectors_t *gc;
++extern struct collectors_t *gc;
+ 
+ void gc_handler(int signal);
+ void gc_attach(int (*fp)(void));
+diff --git a/libs/socket.h b/libs/socket.h
+index 07b9c29..fc602da 100644
+--- a/libs/socket.h
++++ b/libs/socket.h
+@@ -28,9 +28,9 @@ typedef struct socket_callback_t {
+     void (*client_data_callback)(int, char*);
+ } socket_callback_t;
+ 
+-int serverSocket;
+-int clientSocket;
+-int socket_clients[MAX_CLIENTS];
++extern int serverSocket;
++extern int clientSocket;
++extern int socket_clients[MAX_CLIENTS];
+ 
+ /* Start the socket server */
+ int socket_start(unsigned short port);
+diff --git a/libs/template.h b/libs/template.h
+index 1037fd9..483039e 100644
+--- a/libs/template.h
++++ b/libs/template.h
+@@ -59,7 +59,7 @@ typedef struct template_t {
+ 	struct template_t *next;
+ } template_t;
+ 
+-struct template_t *template;
++extern struct template_t *template;
+ 
+ void template_reverse_struct(struct template_t **tpl);
+ void template_print(void);
+diff --git a/send.c b/send.c
+index 77dad04..e78d518 100644
+--- a/send.c
++++ b/send.c
+@@ -33,6 +33,8 @@ with Splash. If not, see <http://www.gnu.org/licenses/>
+ #include "socket.h"
+ #include "json.h"
+ 
++#include "globals.h"
++
+ int main(int argc, char **argv) {
+ 
+ 	log_file_disable();
+-- 
+2.20.1
+
+diff --git a/Makefile b/Makefile
+index 5a549ed..12ac2b2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -24,7 +24,7 @@ SRC = $(wildcard *.c)
+ INCLUDES = $(wildcard libs/*.h) $(wildcard libs/*.o)
+ INCLUDE = -I./ -I./libs -I/usr/include/freetype2
+ PROGAMS = $(patsubst %.c,splash-%,$(SRC))
+-LIBS = -lpng -lfreetype -ljpeg -lpthread -lm -lz 
++LIBS = -lpng -lfreetype -ljpeg -lpthread -lm -lz -lbrotlicommon -lbrotlidec
+ PREFIX = /usr/local
+ 
+ .PHONY: subdirs $(SUBDIRS)
+@@ -34,22 +34,18 @@ subdirs: $(SUBDIRS) all
+ $(SUBDIRS):
+ 	$(MAKE) -C $@
+ 
+-all: shlib $(PROGAMS)  .
+-
+-shlib: $(wildcard libs/*.c) splash-daemon-static
+-	mkdir -p .libs
+-	$(GCC) -c $(CFLAGS) -fpic $(INCLUDE) $(LIBS) -o .libs/
++all: splash-daemon-static $(PROGAMS)  .
+ 
+ splash-daemon-static: daemon.c $(INCLUDES)
+-	$(GCC) $(CFLAGS)  $(wildcard libs/*.c) $(LIBS) -lpng -lfreetype -ljpeg -lpthread -lm -lz -static -o $@ daemon.c
++	$(GCC) $(CFLAGS) $(wildcard libs/*.c) $(LIBS) -lpng -lfreetype -ljpeg -lpthread -lm -lz -lbrotlicommon -lbrotlidec -static -o $@ daemon.c
+ 	strip splash-daemon-static
+ 	
+ splash-daemon: daemon.c $(INCLUDES)
+-	$(GCC) $(CFLAGS) -lpthread  $(wildcard libs/*.c) $(LIBS) -lpng -lm -lfreetype -o $@ $(patsubst splash-%,%.c,$@)
++	$(GCC) $(CFLAGS) $(wildcard libs/*.c) $(LIBS) -o $@ $(patsubst splash-%,%.c,$@)
+ 	strip splash-daemon
+ 	
+ splash-send: send.c $(INCLUDES)
+-	$(GCC) $(CFLAGS)  $(wildcard libs/*.c)  $(LIBS) -lm -o $@ $(patsubst splash-%,%.c,$@)
++	$(GCC) $(CFLAGS) $(wildcard libs/*.c) $(LIBS) -lm -o $@ $(patsubst splash-%,%.c,$@)
+ 	strip splash-send
+ 
+ clean:
