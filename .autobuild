@@ -1,1 +1,2 @@
-rpi staging main
+rpi stable main
+arm64 stable main
